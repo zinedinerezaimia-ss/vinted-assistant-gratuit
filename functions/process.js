@@ -1,117 +1,90 @@
-<!DOCTYPE html>
-<html lang="fr" class="dark">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VintedAI</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { background-color: #1a1b1e; color: white; }
-        .dropzone { border: 2px dashed #00ffff; border-radius: 1rem; padding: 2rem; text-align: center; cursor: pointer; }
-        .dropzone:hover { border-color: #00bfff; }
-    </style>
-</head>
-<body class="min-h-screen flex flex-col items-center justify-between p-4">
-    <header class="w-full text-center py-4">
-        <h1 class="text-2xl font-bold text-cyan-400">🛍️ VintedAI</h1>
-    </header>
-    <main class="flex-grow w-full max-w-md">
-        <p class="text-lg mb-4">1. AJOUTE TA PHOTO</p>
-        <div class="dropzone bg-gray-800">
-            <span class="text-4xl mb-2">📷</span>
-            <p>Clique ou dépose ta photo ici</p>
-        </div>
-        <input type="file" id="photoInput" accept="image/*" multiple class="hidden">
-        <input type="file" id="cameraInput" accept="image/*" capture="user" class="hidden"> <!-- Pour caméra only -->
-        <div class="flex gap-2 mt-4">
-            <button id="chooseFileBtn" class="flex-1 bg-gray-600 text-white py-2 rounded">Choisir fichier</button>
-            <button id="takePhotoBtn" class="flex-1 bg-gray-600 text-white py-2 rounded">Prendre photo</button>
-        </div>
-        <div id="preview" class="mt-4 flex flex-wrap gap-2"></div>
-    </main>
-    <footer class="w-full max-w-md">
-        <button id="analyzeBtn" class="w-full bg-cyan-500 text-white py-3 rounded-lg font-bold mt-4">Analyser</button>
-        <div id="progress" class="hidden mt-4 text-center">
-            <div class="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-cyan-400"></div>
-            <p>Analyse en cours...</p>
-        </div>
-        <div id="result" class="mt-4 hidden"></div>
-    </footer>
+const busboy = require('busboy');
+const { HfInference } = require('@huggingface/inference');
+const fetch = require('node-fetch');
+const vinted = require('vinted-api');
 
-    <script>
-        const dropzone = document.querySelector('.dropzone');
-        const photoInput = document.getElementById('photoInput');
-        const cameraInput = document.getElementById('cameraInput');
-        const chooseFileBtn = document.getElementById('chooseFileBtn');
-        const takePhotoBtn = document.getElementById('takePhotoBtn');
-        const preview = document.getElementById('preview');
-        const analyzeBtn = document.getElementById('analyzeBtn');
-        const progress = document.getElementById('progress');
-        const resultDiv = document.getElementById('result');
+console.log('Function loaded successfully'); // Log pour confirmer que le code charge
 
-        let selectedFiles = [];
+exports.handler = async (event) => {
+  console.log('Handler called with method:', event.httpMethod); // Debug
+  if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Méthode non autorisée' };
 
-        // Boutons pour trigger inputs
-        chooseFileBtn.addEventListener('click', () => photoInput.click());
-        takePhotoBtn.addEventListener('click', () => cameraInput.click());
+  return new Promise((resolve) => {
+    const bb = busboy({ headers: event.headers });
+    let files = [];
 
-        // Changement inputs
-        photoInput.addEventListener('change', () => handleFiles(photoInput.files));
-        cameraInput.addEventListener('change', () => handleFiles(cameraInput.files));
+    bb.on('file', (name, file) => {
+      const chunks = [];
+      file.on('data', chunk => chunks.push(chunk));
+      file.on('end', () => files.push(Buffer.concat(chunks)));
+    });
 
-        // Drop sur dropzone
-        dropzone.addEventListener('click', () => photoInput.click()); // Default à fichier
-        dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('border-cyan-400'); });
-        dropzone.addEventListener('dragleave', () => dropzone.classList.remove('border-cyan-400'));
-        dropzone.addEventListener('drop', e => {
-            e.preventDefault();
-            dropzone.classList.remove('border-cyan-400');
-            handleFiles(e.dataTransfer.files);
-        });
+    bb.on('finish', async () => {
+      console.log('Files received:', files.length); // Debug nombre de fichiers
+      if (!files.length) return resolve({ statusCode: 400, body: JSON.stringify({error: 'Pas de photo uploadée'}) });
 
-        function handleFiles(files) {
-            selectedFiles = [...selectedFiles, ...Array.from(files)]; // Support multiple ajouts
-            preview.innerHTML = '';
-            selectedFiles.forEach(file => {
-                const img = document.createElement('img');
-                img.src = URL.createObjectURL(file);
-                img.classList.add('w-20', 'h-20', 'object-cover', 'rounded');
-                preview.appendChild(img);
-            });
+      try {
+        const fileBuffer = files[0]; // Analyse la première
+
+        let produit = 'Article mode inconnu';
+        try {
+          const hf = new HfInference(process.env.HF_TOKEN);
+          const detection = await hf.objectDetection({ data: fileBuffer, model: 'ultralytics/yolov8s' });
+          const caption = await hf.imageToText({ data: fileBuffer, model: 'Salesforce/blip-image-captioning-base' });
+          produit = caption.generated_text || detection.map(d => d.label).join(', ');
+        } catch (hfErr) {
+          console.error('HF error:', hfErr);
         }
 
-        analyzeBtn.addEventListener('click', async () => {
-            if (!selectedFiles.length) return alert('Ajoute au moins une photo !');
-            progress.classList.remove('hidden');
-            resultDiv.classList.add('hidden');
+        let categorie = 'Vêtements femmes';
+        if (produit.toLowerCase().includes('shoe') || produit.includes('chaussure')) categorie = 'Chaussures femmes';
 
-            const formData = new FormData();
-            selectedFiles.forEach((file, i) => formData.append(`photo${i}`, file));
+        let moyenneVinted = 'N/A';
+        try {
+          const resultsVinted = await vinted.search({ query: produit, per_page: 20 });
+          const prixVinted = resultsVinted.items.map(i => parseFloat(i.price)).filter(p => !isNaN(p));
+          moyenneVinted = prixVinted.length ? (prixVinted.reduce((a,b)=>a+b,0)/prixVinted.length).toFixed(2) : 'N/A';
+        } catch (vintedErr) {
+          console.error('Vinted error:', vintedErr);
+        }
 
-            try {
-                const response = await fetch('/.netlify/functions/process', { method: 'POST', body: formData });
-                const text = await response.text(); // D'abord text pour debug
-                if (!response.ok) throw new Error(text || 'Erreur serveur');
-                const data = JSON.parse(text); // Puis parse
-                progress.classList.add('hidden');
-                resultDiv.classList.remove('hidden');
-                resultDiv.innerHTML = `
-                    <div class="bg-gray-800 p-4 rounded-lg">
-                        <h3 class="text-lg font-bold mb-2">Résultats (édite si besoin)</h3>
-                        <label class="block mb-1">Titre</label>
-                        <input type="text" class="w-full bg-gray-700 p-2 rounded mb-2" id="titre" value="${data.titre || 'Titre par défaut'}">
-                        <button class="bg-gray-600 py-1 px-2 rounded copy-btn" data-target="titre">Copier</button>
-                        <!-- ... (le reste inchangé comme avant) -->
-                    </div>
-                `;
-                // Boutons copier (inchangé)
-                document.querySelectorAll('.copy-btn').forEach(btn => { /* ... */ });
-            } catch (err) {
-                progress.classList.add('hidden');
-                resultDiv.classList.remove('hidden');
-                resultDiv.innerHTML = `<div class="bg-red-900 p-4 rounded-lg">Erreur : ${err.message}. Vérifie les logs Netlify ou réessaie.</div>`;
-            }
+        const moyenneGlobale = parseFloat(moyenneVinted) || 20;
+
+        let texte = 'Titre : Produit générique\nDescription : Description par défaut.';
+        try {
+          const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${process.env.GROQ_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'llama3-8b-8192',
+              messages: [{ role: 'user', content: `Crée un titre court et une description pour Vinted sur : ${produit}. Prix moyen : ${moyenneGlobale.toFixed(2)}€.` }]
+            })
+          });
+          if (!groqRes.ok) throw new Error(await groqRes.text());
+          const groqData = await groqRes.json();
+          texte = groqData.choices[0].message.content.trim();
+        } catch (groqErr) {
+          console.error('Groq error:', groqErr);
+        }
+
+        const prixSuggere = (moyenneGlobale * 0.9).toFixed(2);
+
+        resolve({
+          statusCode: 200,
+          body: JSON.stringify({
+            titre: texte.split('\n')[0].replace('Titre :', '').trim(),
+            description: texte.split('\n').slice(1).join('\n').replace('Description :', '').trim(),
+            categorie,
+            prix: prixSuggere,
+            conseil: `Prix moyen Vinted : ${moyenneVinted}€. Copie-colle dans Vinted !`
+          })
         });
-    </script>
-</body>
-</html>
+      } catch (err) {
+        console.error('Global error:', err);
+        resolve({ statusCode: 500, body: JSON.stringify({error: `Erreur interne : ${err.message}`}) });
+      }
+    });
+
+    bb.end(event.body);
+  });
+};
