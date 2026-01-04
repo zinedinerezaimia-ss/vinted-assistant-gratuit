@@ -20,29 +20,34 @@ exports.handler = async (event) => {
       if (!fileBuffer) return resolve({ statusCode: 400, body: JSON.stringify({error: 'Pas de photo uploadée'}) });
 
       try {
-        // 1. Identification produit (Hugging Face avec ton token via env)
+        // 1. Identification produit (modèles plus rapides : YOLO pour détection, BLIP pour caption)
         const hf = new HfInference(process.env.HF_TOKEN);
-        const detection = await hf.objectDetection({ data: fileBuffer, model: 'facebook/detr-resnet-50' });
+        const detection = await hf.objectDetection({ data: fileBuffer, model: 'ultralytics/yolov8s' }); // Plus rapide que DETR
         const caption = await hf.imageToText({ data: fileBuffer, model: 'Salesforce/blip-image-captioning-base' });
         const produit = caption.generated_text || detection.map(d => d.label).join(', ') || 'Article mode inconnu';
+
+        // Suggestion catégorie simple basée sur produit (améliore avec plus de logique si besoin)
+        let categorie = 'Vêtements femmes'; // Default
+        if (produit.includes('shoe') || produit.includes('chaussure')) categorie = 'Chaussures femmes';
+        if (produit.includes('bag') || produit.includes('sac')) categorie = 'Sacs femmes';
+        // Ajoute plus de mappings
 
         // 2. Recherche prix Vinted
         const resultsVinted = await vinted.search({ query: produit, per_page: 20 });
         const prixVinted = resultsVinted.items.map(i => parseFloat(i.price)).filter(p => !isNaN(p));
         const moyenneVinted = prixVinted.length ? (prixVinted.reduce((a,b)=>a+b,0)/prixVinted.length).toFixed(2) : 'N/A';
 
-        // 3. Comparaison eBay (recherche publique simple sans key, via fetch + parsing basique)
+        // 3. Comparaison eBay (recherche publique)
         const ebayUrl = `https://www.ebay.fr/sch/i.html?_nkw=${encodeURIComponent(produit)}&_sacat=0&_pgn=1`;
         const ebayRes = await fetch(ebayUrl);
         const ebayHtml = await ebayRes.text();
-        const prixEbayMatches = ebayHtml.match(/€\s*([\d.,]+)/g) || []; // Regex simple pour extraire prix
+        const prixEbayMatches = ebayHtml.match(/€\s*([\d.,]+)/g) || [];
         const prixEbay = prixEbayMatches.slice(0, 10).map(p => parseFloat(p.replace(/[^0-9.]/g, ''))).filter(p => !isNaN(p));
         const moyenneEbay = prixEbay.length ? (prixEbay.reduce((a,b)=>a+b,0)/prixEbay.length).toFixed(2) : 'N/A';
 
-        // Moyenne globale
         const moyenneGlobale = ((parseFloat(moyenneVinted) || 0) + (parseFloat(moyenneEbay) || 0)) / 2;
 
-        // 4. Génération texte (Groq avec ton token via env)
+        // 4. Génération texte (Groq)
         const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -51,28 +56,28 @@ exports.handler = async (event) => {
           },
           body: JSON.stringify({
             model: 'llama3-8b-8192',
-            messages: [{ role: 'user', content: `Crée un titre court et une description attractive pour une annonce Vinted sur : ${produit}. Prix moyen sur Vinted : ${moyenneVinted}€, sur eBay : ${moyenneEbay}€. Rends-la convaincante, ajoute des détails vendeurs comme l'état, la taille si possible, et optimise pour la vente.` }]
+            messages: [{ role: 'user', content: `Crée un titre court (max 80 chars) et une description détaillée pour Vinted sur : ${produit}. Prix moyen : ${moyenneGlobale.toFixed(2)}€. Ajoute état, taille si possible.` }]
           })
         });
-        if (!groqRes.ok) throw new Error('Erreur Groq : ' + await groqRes.text());
+        if (!groqRes.ok) throw new Error('Erreur Groq');
         const groqData = await groqRes.json();
         const texte = groqData.choices[0].message.content.trim();
 
-        const prixSuggere = moyenneGlobale > 0 ? (moyenneGlobale * 0.9).toFixed(2) : '15-30'; // 10% en dessous pour compétitivité
+        const prixSuggere = moyenneGlobale > 0 ? (moyenneGlobale * 0.9).toFixed(2) : '15.00';
 
         resolve({
           statusCode: 200,
           body: JSON.stringify({
-            produit,
             titre: texte.split('\n')[0].replace('Titre :', '').trim(),
             description: texte.split('\n').slice(1).join('\n').replace('Description :', '').trim(),
+            categorie,
             prix: prixSuggere,
-            conseil: `Prix moyen Vinted : ${moyenneVinted}€ | eBay : ${moyenneEbay}€`
+            conseil: `Prix moyen Vinted : ${moyenneVinted}€ | eBay : ${moyenneEbay}€. Copie-colle dans Vinted !`
           })
         });
       } catch (err) {
         console.error(err);
-        resolve({ statusCode: 500, body: JSON.stringify({error: `Erreur interne : ${err.message}`}) });
+        resolve({ statusCode: 500, body: JSON.stringify({error: `Erreur : ${err.message}`}) });
       }
     });
 
