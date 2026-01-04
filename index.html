@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Assistant Vinted Gratuit</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 50px; }
+        #result { margin-top: 30px; }
+    </style>
+</head>
+<body>
+    <h1>Assistant Vinted IA (100% Gratuit)</h1>
+    <p>Prends une photo de ton article → l'IA fait le reste !</p>
+    <form id="uploadForm" enctype="multipart/form-data">
+        <input type="file" name="photo" accept="image/*" required>
+        <button type="submit">Analyser</button>
+    </form>
+    <div id="result"></div>
+
+    <script>
+        const form = document.getElementById('uploadForm');
+        const resultDiv = document.getElementById('result');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            resultDiv.innerHTML = 'Analyse en cours...';
+            const formData = new FormData(form);
+            const response = await fetch('/.netlify/functions/process', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+            if (data.error) {
+                resultDiv.innerHTML = `<p style="color:red;">Erreur : ${data.error}</p>`;
+                return;
+            }
+            resultDiv.innerHTML = `
+                <h2>Produit détecté : ${data.produit}</h2>
+                <p><strong>Titre suggéré :</strong> ${data.titre}</p>
+                <p><strong>Description :</strong> ${data.description}</p>
+                <p><strong>Prix suggéré :</strong> ${data.prix} €</p>
+                <p><strong>Conseil :</strong> ${data.conseil}</p>
+            `;
+        });
+    </script>
+</body>
+</html>
