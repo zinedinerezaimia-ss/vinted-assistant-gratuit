@@ -1,48 +1,52 @@
 const busboy = require('busboy');
 const { HfInference } = require('@huggingface/inference');
 const fetch = require('node-fetch');
-const vinted = require('vinted-api');
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return { statusCode: 405, body: 'Méthode non autorisée' };
 
   return new Promise((resolve) => {
     const bb = busboy({ headers: event.headers });
-    let fileBuffer;
+    let fileBuffers = [];
 
     bb.on('file', (name, file) => {
       const chunks = [];
       file.on('data', chunk => chunks.push(chunk));
-      file.on('end', () => { fileBuffer = Buffer.concat(chunks); });
+      file.on('end', () => fileBuffers.push(Buffer.concat(chunks)));
     });
 
     bb.on('finish', async () => {
-      if (!fileBuffer) return resolve({ statusCode: 400, body: JSON.stringify({error: 'Pas de photo uploadée'}) });
+      if (!fileBuffers.length) return resolve({ statusCode: 400, body: JSON.stringify({error: 'Pas de photo'}) });
 
       try {
-        // 1. Identification produit (modèles plus rapides : YOLO pour détection, BLIP pour caption)
+        // Prend la première photo pour analyse
+        const fileBuffer = fileBuffers[0];
+
+        // 1. Identification (modèles rapides : Florence-2 pour caption, YOLOv8n pour détection)
         const hf = new HfInference(process.env.HF_TOKEN);
-        const detection = await hf.objectDetection({ data: fileBuffer, model: 'ultralytics/yolov8s' }); // Plus rapide que DETR
-        const caption = await hf.imageToText({ data: fileBuffer, model: 'Salesforce/blip-image-captioning-base' });
-        const produit = caption.generated_text || detection.map(d => d.label).join(', ') || 'Article mode inconnu';
+        const caption = await hf.imageToText({ data: fileBuffer, model: 'microsoft/Florence-2-base' });
+        const detection = await hf.objectDetection({ data: fileBuffer, model: 'ultralytics/yolov8n' });
+        const produit = caption.generated_text || detection.map(d => d.label).join(', ') || 'Article inconnu';
 
-        // Suggestion catégorie simple basée sur produit (améliore avec plus de logique si besoin)
-        let categorie = 'Vêtements femmes'; // Default
-        if (produit.includes('shoe') || produit.includes('chaussure')) categorie = 'Chaussures femmes';
-        if (produit.includes('bag') || produit.includes('sac')) categorie = 'Sacs femmes';
-        // Ajoute plus de mappings
+        // Suggestion catégorie
+        let categorie = 'Vêtements femmes';
+        if (produit.toLowerCase().includes('shoe') || produit.includes('chaussure')) categorie = 'Chaussures femmes';
+        if (produit.toLowerCase().includes('bag') || produit.includes('sac')) categorie = 'Sacs femmes';
 
-        // 2. Recherche prix Vinted
-        const resultsVinted = await vinted.search({ query: produit, per_page: 20 });
-        const prixVinted = resultsVinted.items.map(i => parseFloat(i.price)).filter(p => !isNaN(p));
+        // 2. Scraping Vinted (remplace vinted-api)
+        const vintedUrl = `https://www.vinted.fr/catalog?search_text=${encodeURIComponent(produit)}`;
+        const vintedRes = await fetch(vintedUrl);
+        const vintedHtml = await vintedRes.text();
+        const prixVintedMatches = vintedHtml.match(/€\s*([\d.,]+)/g) || [];
+        const prixVinted = prixVintedMatches.slice(0, 20).map(p => parseFloat(p.replace(/[^0-9.]/g, ''))).filter(p => !isNaN(p));
         const moyenneVinted = prixVinted.length ? (prixVinted.reduce((a,b)=>a+b,0)/prixVinted.length).toFixed(2) : 'N/A';
 
-        // 3. Comparaison eBay (recherche publique)
+        // 3. Scraping eBay (amélioré)
         const ebayUrl = `https://www.ebay.fr/sch/i.html?_nkw=${encodeURIComponent(produit)}&_sacat=0&_pgn=1`;
         const ebayRes = await fetch(ebayUrl);
         const ebayHtml = await ebayRes.text();
         const prixEbayMatches = ebayHtml.match(/€\s*([\d.,]+)/g) || [];
-        const prixEbay = prixEbayMatches.slice(0, 10).map(p => parseFloat(p.replace(/[^0-9.]/g, ''))).filter(p => !isNaN(p));
+        const prixEbay = prixEbayMatches.slice(0, 20).map(p => parseFloat(p.replace(/[^0-9.]/g, ''))).filter(p => !isNaN(p));
         const moyenneEbay = prixEbay.length ? (prixEbay.reduce((a,b)=>a+b,0)/prixEbay.length).toFixed(2) : 'N/A';
 
         const moyenneGlobale = ((parseFloat(moyenneVinted) || 0) + (parseFloat(moyenneEbay) || 0)) / 2;
@@ -56,10 +60,10 @@ exports.handler = async (event) => {
           },
           body: JSON.stringify({
             model: 'llama3-8b-8192',
-            messages: [{ role: 'user', content: `Crée un titre court (max 80 chars) et une description détaillée pour Vinted sur : ${produit}. Prix moyen : ${moyenneGlobale.toFixed(2)}€. Ajoute état, taille si possible.` }]
+            messages: [{ role: 'user', content: `Crée un titre court (max 80 chars) et une description détaillée pour Vinted sur : ${produit}. Prix moyen : ${moyenneGlobale.toFixed(2)}€. Ajoute état neuf, taille estimée si possible, emojis pour attractivité.` }]
           })
         });
-        if (!groqRes.ok) throw new Error('Erreur Groq');
+        if (!groqRes.ok) throw new Error('Erreur Groq : ' + await groqRes.text());
         const groqData = await groqRes.json();
         const texte = groqData.choices[0].message.content.trim();
 
@@ -72,7 +76,7 @@ exports.handler = async (event) => {
             description: texte.split('\n').slice(1).join('\n').replace('Description :', '').trim(),
             categorie,
             prix: prixSuggere,
-            conseil: `Prix moyen Vinted : ${moyenneVinted}€ | eBay : ${moyenneEbay}€. Copie-colle dans Vinted !`
+            conseil: `Prix moyen Vinted : ${moyenneVinted}€ | eBay : ${moyenneEbay}€. Copie dans Vinted !`
           })
         });
       } catch (err) {
