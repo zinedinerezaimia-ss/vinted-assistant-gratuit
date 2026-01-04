@@ -1,136 +1,120 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="fr" class="dark">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black">
-    <title>Vinted IA Assistant</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VintedAI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { background: linear-gradient(135deg, #f3e7ff, #fff); font-family: 'Segoe UI', sans-serif; }
-        .container { max-width: 100%; padding: 20px; }
-        .header { background: #6f42c1; color: white; padding: 15px; text-align: center; border-radius: 0 0 20px 20px; }
-        .btn-primary { background: #6f42c1; border: none; }
-        .form-control { border-radius: 10px; }
-        #photosPreview { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
-        .photo-preview { width: 100px; height: 100px; object-fit: cover; border-radius: 10px; border: 2px solid #6f42c1; }
-        #result { background: white; border-radius: 20px; padding: 20px; margin-top: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
-        .copy-btn { background: #6f42c1; color: white; }
+        body { background-color: #1a1b1e; color: white; }
+        .dropzone { border: 2px dashed #00ffff; border-radius: 1rem; padding: 2rem; text-align: center; cursor: pointer; }
+        .dropzone:hover { border-color: #00bfff; }
     </style>
 </head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h3><i class="bi bi-bag-heart-fill me-2"></i>Vinted IA Assistant</h3>
-            <p>Ajoute tes photos, l'IA crée ton annonce !</p>
+<body class="min-h-screen flex flex-col items-center justify-between p-4">
+    <header class="w-full text-center py-4">
+        <h1 class="text-2xl font-bold text-cyan-400">🛍️ VintedAI</h1>
+    </header>
+    <main class="flex-grow w-full max-w-md">
+        <p class="text-lg mb-4">1. AJOUTE TA PHOTO</p>
+        <div id="dropzone" class="dropzone bg-gray-800">
+            <span class="text-4xl mb-2">📷</span>
+            <p>Clique ou dépose ta photo ici</p>
+            <input type="file" id="photoInput" accept="image/*" capture="user" multiple class="hidden">
         </div>
-        <form id="uploadForm" class="mt-3" enctype="multipart/form-data">
-            <div class="d-grid gap-2">
-                <button type="button" id="cameraBtn" class="btn btn-primary"><i class="bi bi-camera-fill me-2"></i>Prendre photo</button>
-                <input type="file" id="photoInput" name="photos" accept="image/*" capture="environment" multiple style="display: none;">
-                <button type="button" id="galleryBtn" class="btn btn-secondary"><i class="bi bi-images me-2"></i>Choisir de la galerie</button>
-            </div>
-            <div id="photosPreview"></div>
-            <button type="submit" class="btn btn-primary w-100 mt-3"><i class="bi bi-rocket-takeoff-fill me-2"></i>Analyser</button>
-        </form>
-        <div class="progress mt-3" id="progress" style="display: none;">
-            <div class="progress-bar bg-primary progress-bar-striped progress-bar-animated" style="width: 0%;"></div>
-        </div>
-        <div id="result" style="display: none;"></div>
-    </div>
+        <div id="preview" class="mt-4 flex flex-wrap gap-2"></div>
+    </main>
+    <footer class="w-full max-w-md">
+        <button id="analyzeBtn" class="w-full bg-cyan-500 text-white py-3 rounded-lg font-bold mt-4">Analyser</button>
+        <div id="progress" class="hidden mt-4 text-center">Analyse en cours...</div>
+        <div id="result" class="mt-4 hidden"></div>
+    </footer>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        const form = document.getElementById('uploadForm');
+        const dropzone = document.getElementById('dropzone');
         const photoInput = document.getElementById('photoInput');
-        const cameraBtn = document.getElementById('cameraBtn');
-        const galleryBtn = document.getElementById('galleryBtn');
-        const photosPreview = document.getElementById('photosPreview');
+        const preview = document.getElementById('preview');
+        const analyzeBtn = document.getElementById('analyzeBtn');
         const progress = document.getElementById('progress');
-        const progressBar = progress.querySelector('.progress-bar');
         const resultDiv = document.getElementById('result');
 
-        cameraBtn.addEventListener('click', () => { photoInput.removeAttribute('multiple'); photoInput.click(); });
-        galleryBtn.addEventListener('click', () => { photoInput.setAttribute('multiple', ''); photoInput.click(); });
+        // Dropzone click to open file/camera
+        dropzone.addEventListener('click', () => photoInput.click());
 
-        photoInput.addEventListener('change', () => {
-            photosPreview.innerHTML = '';
-            Array.from(photoInput.files).forEach(file => {
-                const img = document.createElement('img');
-                img.src = URL.createObjectURL(file);
-                img.classList.add('photo-preview');
-                photosPreview.appendChild(img);
-            });
+        // Drag & drop
+        dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('border-cyan-400'); });
+        dropzone.addEventListener('dragleave', () => dropzone.classList.remove('border-cyan-400'));
+        dropzone.addEventListener('drop', e => {
+            e.preventDefault();
+            dropzone.classList.remove('border-cyan-400');
+            handleFiles(e.dataTransfer.files);
         });
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
+        // File input change
+        photoInput.addEventListener('change', () => handleFiles(photoInput.files));
+
+        function handleFiles(files) {
+            preview.innerHTML = '';
+            Array.from(files).forEach(file => {
+                const img = document.createElement('img');
+                img.src = URL.createObjectURL(file);
+                img.classList.add('w-20 h-20 object-cover rounded');
+                preview.appendChild(img);
+            });
+        }
+
+        analyzeBtn.addEventListener('click', async () => {
             if (!photoInput.files.length) return alert('Ajoute au moins une photo !');
-            progress.style.display = 'block';
-            progressBar.style.width = '0%';
-            resultDiv.style.display = 'none';
+            progress.classList.remove('hidden');
+            resultDiv.classList.add('hidden');
 
-            let pct = 0;
-            const interval = setInterval(() => { pct += 20; progressBar.style.width = `${Math.min(pct, 100)}%`; if (pct >= 100) clearInterval(interval); }, 300);
+            const formData = new FormData();
+            Array.from(photoInput.files).forEach((file, i) => formData.append(`photo${i}`, file)); // Envoie toutes les photos, mais analyse la première
 
-            const formData = new FormData(form);
             try {
                 const response = await fetch('/.netlify/functions/process', { method: 'POST', body: formData });
+                if (!response.ok) throw new Error(await response.text());
                 const data = await response.json();
-                if (data.error) throw new Error(data.error);
-
-                progress.style.display = 'none';
-                resultDiv.style.display = 'block';
+                progress.classList.add('hidden');
+                resultDiv.classList.remove('hidden');
                 resultDiv.innerHTML = `
-                    <h4 class="mb-3"><i class="bi bi-pencil-square me-2"></i>Résultats (édite si besoin)</h4>
-                    <form id="editForm">
-                        <div class="mb-3">
-                            <label for="titre" class="form-label">Titre</label>
-                            <input type="text" class="form-control" id="titre" value="${data.titre}">
-                            <button type="button" class="btn copy-btn mt-2" data-target="titre"><i class="bi bi-clipboard me-2"></i>Copier</button>
-                        </div>
-                        <div class="mb-3">
-                            <label for="description" class="form-label">Description</label>
-                            <textarea class="form-control" id="description" rows="4">${data.description}</textarea>
-                            <button type="button" class="btn copy-btn mt-2" data-target="description"><i class="bi bi-clipboard me-2"></i>Copier</button>
-                        </div>
-                        <div class="mb-3">
-                            <label for="categorie" class="form-label">Catégorie</label>
-                            <select class="form-select" id="categorie">
-                                <option>${data.categorie}</option>
-                                <option>Vêtements femmes</option>
-                                <option>Chaussures femmes</option>
-                                <option>Sacs femmes</option>
-                                <option>Accessoires femmes</option>
-                                <option>Vêtements hommes</option>
-                                <option>Chaussures hommes</option>
-                                <!-- Ajoute plus -->
-                            </select>
-                            <button type="button" class="btn copy-btn mt-2" data-target="categorie"><i class="bi bi-clipboard me-2"></i>Copier</button>
-                        </div>
-                        <div class="mb-3">
-                            <label for="prix" class="form-label">Prix</label>
-                            <input type="text" class="form-control" id="prix" value="${data.prix} €">
-                            <button type="button" class="btn copy-btn mt-2" data-target="prix"><i class="bi bi-clipboard me-2"></i>Copier</button>
-                        </div>
-                        <p class="text-muted">${data.conseil}</p>
-                    </form>
+                    <div class="bg-gray-800 p-4 rounded-lg">
+                        <h3 class="text-lg font-bold mb-2">Résultats (édite si besoin)</h3>
+                        <label class="block mb-1">Titre</label>
+                        <input type="text" class="w-full bg-gray-700 p-2 rounded mb-2" id="titre" value="${data.titre}">
+                        <button class="bg-gray-600 py-1 px-2 rounded copy-btn" data-target="titre">Copier</button>
+                        <label class="block mb-1 mt-4">Description</label>
+                        <textarea class="w-full bg-gray-700 p-2 rounded mb-2" rows="4" id="description">${data.description}</textarea>
+                        <button class="bg-gray-600 py-1 px-2 rounded copy-btn" data-target="description">Copier</button>
+                        <label class="block mb-1 mt-4">Catégorie</label>
+                        <select class="w-full bg-gray-700 p-2 rounded mb-2" id="categorie">
+                            <option>${data.categorie}</option>
+                            <!-- Options comme avant -->
+                            <option>Vêtements femmes</option>
+                            <option>Chaussures femmes</option>
+                            <!-- ... -->
+                        </select>
+                        <button class="bg-gray-600 py-1 px-2 rounded copy-btn" data-target="categorie">Copier</button>
+                        <label class="block mb-1 mt-4">Prix</label>
+                        <input type="text" class="w-full bg-gray-700 p-2 rounded mb-2" id="prix" value="${data.prix} €">
+                        <button class="bg-gray-600 py-1 px-2 rounded copy-btn" data-target="prix">Copier</button>
+                        <p class="text-sm mt-4">${data.conseil}</p>
+                    </div>
                 `;
 
+                // Copier buttons
                 document.querySelectorAll('.copy-btn').forEach(btn => {
                     btn.addEventListener('click', () => {
                         const target = document.getElementById(btn.dataset.target);
                         navigator.clipboard.writeText(target.value);
-                        btn.innerHTML = '<i class="bi bi-check-circle me-2"></i>Copié !';
-                        setTimeout(() => btn.innerHTML = '<i class="bi bi-clipboard me-2"></i>Copier', 2000);
+                        btn.textContent = 'Copié !';
+                        setTimeout(() => btn.textContent = 'Copier', 2000);
                     });
                 });
             } catch (err) {
-                progress.style.display = 'none';
-                resultDiv.style.display = 'block';
-                resultDiv.innerHTML = `<div class="alert alert-danger">Erreur : ${err.message}</div>`;
+                progress.classList.add('hidden');
+                resultDiv.classList.remove('hidden');
+                resultDiv.innerHTML = `<div class="bg-red-900 p-4 rounded-lg">Erreur : ${err.message}</div>`;
             }
         });
     </script>
