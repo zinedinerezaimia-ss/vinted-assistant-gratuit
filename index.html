@@ -17,31 +17,33 @@
     </header>
     <main class="flex-grow w-full max-w-md">
         <p class="text-lg mb-4">1. AJOUTE TA PHOTO</p>
-        <div id="dropzone" class="dropzone bg-gray-800">
+        <label for="photoInput" class="dropzone bg-gray-800 block"> <!-- Label pour trigger fiable sur clic -->
             <span class="text-4xl mb-2">📷</span>
             <p>Clique ou dépose ta photo ici</p>
-            <input type="file" id="photoInput" accept="image/*" capture="user" multiple class="hidden">
-        </div>
+        </label>
+        <input type="file" id="photoInput" accept="image/*" multiple class="hidden"> <!-- Retiré capture pour multiple ; mobile propose caméra anyway -->
         <div id="preview" class="mt-4 flex flex-wrap gap-2"></div>
     </main>
     <footer class="w-full max-w-md">
         <button id="analyzeBtn" class="w-full bg-cyan-500 text-white py-3 rounded-lg font-bold mt-4">Analyser</button>
-        <div id="progress" class="hidden mt-4 text-center">Analyse en cours...</div>
+        <div id="progress" class="hidden mt-4 text-center">
+            <div class="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-cyan-400"></div>
+            <p>Analyse en cours...</p>
+        </div>
         <div id="result" class="mt-4 hidden"></div>
     </footer>
 
     <script>
-        const dropzone = document.getElementById('dropzone');
+        const dropzone = document.querySelector('.dropzone');
         const photoInput = document.getElementById('photoInput');
         const preview = document.getElementById('preview');
         const analyzeBtn = document.getElementById('analyzeBtn');
         const progress = document.getElementById('progress');
         const resultDiv = document.getElementById('result');
 
-        // Dropzone click to open file/camera
-        dropzone.addEventListener('click', () => photoInput.click());
+        let selectedFiles = []; // Variable pour stocker files (fix drop/upload)
 
-        // Drag & drop
+        // Drag & drop sur dropzone
         dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('border-cyan-400'); });
         dropzone.addEventListener('dragleave', () => dropzone.classList.remove('border-cyan-400'));
         dropzone.addEventListener('drop', e => {
@@ -50,12 +52,13 @@
             handleFiles(e.dataTransfer.files);
         });
 
-        // File input change
+        // Changement input (inclut caméra sur mobile)
         photoInput.addEventListener('change', () => handleFiles(photoInput.files));
 
         function handleFiles(files) {
+            selectedFiles = Array.from(files); // Stocke ici
             preview.innerHTML = '';
-            Array.from(files).forEach(file => {
+            selectedFiles.forEach(file => {
                 const img = document.createElement('img');
                 img.src = URL.createObjectURL(file);
                 img.classList.add('w-20 h-20 object-cover rounded');
@@ -64,12 +67,12 @@
         }
 
         analyzeBtn.addEventListener('click', async () => {
-            if (!photoInput.files.length) return alert('Ajoute au moins une photo !');
+            if (!selectedFiles.length) return alert('Ajoute au moins une photo !'); // Check client-side
             progress.classList.remove('hidden');
             resultDiv.classList.add('hidden');
 
             const formData = new FormData();
-            Array.from(photoInput.files).forEach((file, i) => formData.append(`photo${i}`, file)); // Envoie toutes les photos, mais analyse la première
+            selectedFiles.forEach((file, i) => formData.append(`photo${i}`, file)); // Envoie à partir de selectedFiles
 
             try {
                 const response = await fetch('/.netlify/functions/process', { method: 'POST', body: formData });
@@ -81,28 +84,31 @@
                     <div class="bg-gray-800 p-4 rounded-lg">
                         <h3 class="text-lg font-bold mb-2">Résultats (édite si besoin)</h3>
                         <label class="block mb-1">Titre</label>
-                        <input type="text" class="w-full bg-gray-700 p-2 rounded mb-2" id="titre" value="${data.titre}">
+                        <input type="text" class="w-full bg-gray-700 p-2 rounded mb-2" id="titre" value="${data.titre || 'Titre par défaut'}">
                         <button class="bg-gray-600 py-1 px-2 rounded copy-btn" data-target="titre">Copier</button>
                         <label class="block mb-1 mt-4">Description</label>
-                        <textarea class="w-full bg-gray-700 p-2 rounded mb-2" rows="4" id="description">${data.description}</textarea>
+                        <textarea class="w-full bg-gray-700 p-2 rounded mb-2" rows="4" id="description">${data.description || 'Description par défaut'}</textarea>
                         <button class="bg-gray-600 py-1 px-2 rounded copy-btn" data-target="description">Copier</button>
                         <label class="block mb-1 mt-4">Catégorie</label>
                         <select class="w-full bg-gray-700 p-2 rounded mb-2" id="categorie">
-                            <option>${data.categorie}</option>
-                            <!-- Options comme avant -->
+                            <option>${data.categorie || 'Vêtements femmes'}</option>
                             <option>Vêtements femmes</option>
                             <option>Chaussures femmes</option>
-                            <!-- ... -->
+                            <option>Sacs femmes</option>
+                            <option>Accessoires femmes</option>
+                            <option>Vêtements hommes</option>
+                            <option>Chaussures hommes</option>
+                            <!-- Ajoute d'autres catégories Vinted -->
                         </select>
                         <button class="bg-gray-600 py-1 px-2 rounded copy-btn" data-target="categorie">Copier</button>
                         <label class="block mb-1 mt-4">Prix</label>
-                        <input type="text" class="w-full bg-gray-700 p-2 rounded mb-2" id="prix" value="${data.prix} €">
+                        <input type="text" class="w-full bg-gray-700 p-2 rounded mb-2" id="prix" value="${data.prix || '15.00'} €">
                         <button class="bg-gray-600 py-1 px-2 rounded copy-btn" data-target="prix">Copier</button>
-                        <p class="text-sm mt-4">${data.conseil}</p>
+                        <p class="text-sm mt-4">${data.conseil || 'Prix moyen estimé'}</p>
                     </div>
                 `;
 
-                // Copier buttons
+                // Boutons copier
                 document.querySelectorAll('.copy-btn').forEach(btn => {
                     btn.addEventListener('click', () => {
                         const target = document.getElementById(btn.dataset.target);
@@ -114,7 +120,7 @@
             } catch (err) {
                 progress.classList.add('hidden');
                 resultDiv.classList.remove('hidden');
-                resultDiv.innerHTML = `<div class="bg-red-900 p-4 rounded-lg">Erreur : ${err.message}</div>`;
+                resultDiv.innerHTML = `<div class="bg-red-900 p-4 rounded-lg">Erreur : ${err.message}. Vérifie ta connexion ou réessaie.</div>`;
             }
         });
     </script>
