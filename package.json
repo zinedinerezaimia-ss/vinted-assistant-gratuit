@@ -1,0 +1,10 @@
+{
+  "name": "vinted-assistant",
+  "version": "1.0.0",
+  "dependencies": {
+    "@huggingface/inference": "^2.7.0",
+    "busboy": "^1.6.0",
+    "node-fetch": "^3.3.2",
+    "vinted-api": "^2.1.0"
+  }
+}
